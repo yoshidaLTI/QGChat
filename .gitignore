@@ -1,0 +1,32 @@
+# Python関連
+__pycache__/
+*.py[cod]
+
+# 仮想環境
+venv/
+venv1/
+.venv/
+
+# DB
+*.db
+
+# 一時・出力ファイル
+tmp/
+logs/
+*.log
+
+# アップロードされた動画・画像
+server/uploads/
+*.mp4
+*.mov
+*.avi
+*.wav
+*.m4a
+*.png
+*.jpg
+*.jpeg
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
