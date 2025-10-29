@@ -385,15 +385,28 @@ app.post("/api/scenario", requireAuth, (req, res) => {
   res.status(204).end();
 });
 
-// ========== 資料 ==========
+// ========== 資料アップロード設定（日本語ファイル名対応） ==========
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => {
     const userId = req.user?.id || "anon";
     const ts = Date.now();
-    cb(null, `${userId}_${ts}_${sanitizeName(file.originalname)}`);
+
+    // --- ★UTF-8再解釈処理★ ---
+    let original = file.originalname;
+    // latin1(ISO-8859-1)として誤認された可能性に対処
+    original = Buffer.from(original, "latin1").toString("utf8");
+
+    // 禁止文字除去
+    const base = path.parse(original).name;
+    const ext  = path.extname(original);
+    const safeBase = base.replace(/[\\/:*?"<>|]/g, "_");
+
+    const filename = `${userId}_${ts}_${safeBase}${ext}`;
+    cb(null, filename);
   }
 });
+
 const upload = multer({ storage });
 
 app.get("/api/materials", requireAuth, (req, res) => {

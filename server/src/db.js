@@ -3,25 +3,60 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 
+
 const dbPath = path.join(process.cwd(), "chat.sqlite3");
 const firstBoot = !fs.existsSync(dbPath);
 const db = new Database(dbPath);
 
+
 db.pragma("foreign_keys = ON");
 try { db.pragma("journal_mode = WAL"); } catch {}
-
 /* =========================
  * 初期スキーマ作成
  * ========================= */
 if (firstBoot) {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS users (...);
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
 
-    CREATE TABLE IF NOT EXISTS conversations (...);
 
-    CREATE TABLE IF NOT EXISTS messages (...);
+    CREATE TABLE IF NOT EXISTS conversations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      title TEXT,
+      state TEXT,
+      meta TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
 
-    CREATE TABLE IF NOT EXISTS documents (...);
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+
+    CREATE TABLE IF NOT EXISTS documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      stored_filename TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      mime TEXT,
+      size INTEGER,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
 
     /* 生成結果（講義ごとセット） */
     CREATE TABLE IF NOT EXISTS qg_results (
@@ -38,6 +73,7 @@ if (firstBoot) {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+
     /* OCR (30秒ごと) */
     CREATE TABLE IF NOT EXISTS ocr_results (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +86,7 @@ if (firstBoot) {
       created_at TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
 
     /* ASR (30秒窓ごと) */
     CREATE TABLE IF NOT EXISTS asr_results (
@@ -66,6 +103,7 @@ if (firstBoot) {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+
     /* 生成された問題の明細 */
     CREATE TABLE IF NOT EXISTS qg_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,6 +119,7 @@ if (firstBoot) {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+
     /* インデックス */
     CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
@@ -91,11 +130,12 @@ if (firstBoot) {
     CREATE INDEX IF NOT EXISTS idx_asr_main ON asr_results(user_id, video_name, start_sec);
     CREATE INDEX IF NOT EXISTS idx_qg_items_user ON qg_items(user_id, course_name, created_at);
   `);
-} else {
+}else {
   // 既存DBに対するマイグレーション
   const convCols = db.prepare("PRAGMA table_info(conversations)").all().map(c => c.name);
   if (!convCols.includes("state")) db.exec(`ALTER TABLE conversations ADD COLUMN state TEXT;`);
   if (!convCols.includes("meta"))  db.exec(`ALTER TABLE conversations ADD COLUMN meta TEXT;`);
+
 
   // documents が無い場合
   const hasDocs = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='documents'`).get();
@@ -116,6 +156,7 @@ if (firstBoot) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_docs_user_id ON documents(user_id);`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_docs_user_created ON documents(user_id, created_at);`);
   }
+
 
   // qg_results 無ければ作成
   const hasQG = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='qg_results'`).get();
@@ -138,6 +179,7 @@ if (firstBoot) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_qg_user_course ON qg_results(user_id, course_name, created_at);`);
   }
 
+
   // ocr_results 無ければ作成
   const hasOCR = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='ocr_results'`).get();
   if (!hasOCR) {
@@ -156,6 +198,7 @@ if (firstBoot) {
     `);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_ocr_main ON ocr_results(user_id, video_name, ts_sec);`);
   }
+
 
   // asr_results 無ければ作成
   const hasASR = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='asr_results'`).get();
@@ -178,6 +221,7 @@ if (firstBoot) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_asr_main ON asr_results(user_id, video_name, start_sec);`);
   }
 
+
   // qg_items 無ければ作成
   const hasQGItems = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='qg_items'`).get();
   if (!hasQGItems) {
@@ -199,16 +243,20 @@ if (firstBoot) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_qg_items_user ON qg_items(user_id, course_name, created_at);`);
   }
 
+
   // 既存インデックスの存在保証
   db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);`);
 }
 
 
+
+
 /* =========================
  * ユーティリティ
  * ========================= */
 function safeJSON(s) { try { return JSON.parse(s); } catch { return null; } }
+
 
 /* =========================
  * ユーザ
@@ -221,17 +269,20 @@ export function createUser(username, password_hash) {
   return { id: info.lastInsertRowid, username, created_at: now };
 }
 
+
 export function getUserByUsername(username) {
   return db.prepare(
     `SELECT id, username, password_hash, created_at FROM users WHERE username = ?`
   ).get(username);
 }
 
+
 export function getUserById(id) {
   return db.prepare(
     `SELECT id, username, created_at FROM users WHERE id = ?`
   ).get(id);
 }
+
 
 /* =========================
  * 会話
@@ -245,6 +296,7 @@ export function createConversation(user_id, title = "新規チャット", state 
   return { id: info.lastInsertRowid, user_id, title, state, created_at: now };
 }
 
+
 export function getConversation(user_id, conversationId) {
   const conv = db.prepare(
     `SELECT id, user_id, title, state, meta, created_at
@@ -252,13 +304,16 @@ export function getConversation(user_id, conversationId) {
   ).get(conversationId, user_id);
   if (!conv) return null;
 
+
   const msgs = db.prepare(
     `SELECT id, role, content, created_at
      FROM messages WHERE conversation_id = ? ORDER BY id ASC`
   ).all(conversationId);
 
+
   return { ...conv, meta: conv.meta ? safeJSON(conv.meta) : null, messages: msgs };
 }
+
 
 export function listConversations(user_id, limit = 100) {
   return db.prepare(
@@ -268,6 +323,7 @@ export function listConversations(user_id, limit = 100) {
   ).all(user_id, limit);
 }
 
+
 export function deleteConversation(user_id, conversationId) {
   const row = db.prepare(
     `SELECT id FROM conversations WHERE id = ? AND user_id = ?`
@@ -276,6 +332,7 @@ export function deleteConversation(user_id, conversationId) {
   db.prepare(`DELETE FROM conversations WHERE id = ?`).run(conversationId);
   return true;
 }
+
 
 export function getConversationState(user_id, conversationId) {
   const row = db.prepare(
@@ -288,11 +345,13 @@ export function getConversationState(user_id, conversationId) {
   };
 }
 
+
 export function setConversationState(user_id, conversationId, state, meta = null) {
   const ok = db.prepare(
     `SELECT id FROM conversations WHERE id = ? AND user_id = ?`
   ).get(conversationId, user_id);
   if (!ok) return false;
+
 
   const metaStr = meta ? JSON.stringify(meta) : null;
   db.prepare(
@@ -300,6 +359,7 @@ export function setConversationState(user_id, conversationId, state, meta = null
   ).run(state, metaStr, conversationId);
   return true;
 }
+
 
 /* =========================
  * メッセージ
@@ -313,27 +373,41 @@ export function addMessage(conversationId, role, content) {
   return { id: info.lastInsertRowid, conversation_id: conversationId, role, content, created_at: now };
 }
 
+
 /* =========================
  * 資料（アップロード）
  * ========================= */
 export function insertDocument(user_id, title, stored_filename, original_name, mime, size) {
   const now = new Date().toISOString();
+
+  // --- ★UTF-8再解釈 & 正規化を追加 ---
+  let fixedTitle = title;
+  let fixedOriginal = original_name;
+  try {
+    fixedTitle = Buffer.from(title, "latin1").toString("utf8").normalize("NFC");
+    fixedOriginal = Buffer.from(original_name, "latin1").toString("utf8").normalize("NFC");
+  } catch {
+    // 万が一例外なら元文字列を使う
+  }
+
   const info = db.prepare(
     `INSERT INTO documents (user_id, title, stored_filename, original_name, mime, size, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(user_id, title, stored_filename, original_name, mime, size, now);
+  ).run(user_id, fixedTitle, stored_filename, fixedOriginal, mime, size, now);
 
   return {
     id: info.lastInsertRowid,
     user_id,
-    title,
+    title: fixedTitle,
     stored_filename,
-    original_name,
+    original_name: fixedOriginal,
     mime,
     size,
     created_at: now
   };
 }
+
+
 
 export function listDocuments(user_id, limit = 10) {
   return db.prepare(
@@ -345,6 +419,7 @@ export function listDocuments(user_id, limit = 10) {
   ).all(user_id, limit);
 }
 
+
 export function listDocumentsAll(user_id) {
   return db.prepare(
     `SELECT id, title, stored_filename, original_name, mime, size, created_at
@@ -354,10 +429,12 @@ export function listDocumentsAll(user_id) {
   ).all(user_id);
 }
 
+
 // keep 件数だけ残し、超過分（古い順）を削除して返す
 export function deleteOldDocumentsKeepLatest(user_id, keep = 10, onBeforeDelete = null) {
   const all = listDocumentsAll(user_id); // DESC
   if (all.length <= keep) return [];
+
 
   const toDelete = [...all].sort((a, b) => a.id - b.id).slice(0, all.length - keep);
   const stmt = db.prepare(`DELETE FROM documents WHERE id = ? AND user_id = ?`);
@@ -369,6 +446,7 @@ export function deleteOldDocumentsKeepLatest(user_id, keep = 10, onBeforeDelete 
   }
   return toDelete;
 }
+
 
 /* =========================
  * 生成結果（qg_results）
@@ -394,6 +472,7 @@ export function insertQGResult(
     now
   );
 
+
   return {
     id: info.lastInsertRowid,
     user_id,
@@ -408,6 +487,7 @@ export function insertQGResult(
   };
 }
 
+
 export function listQGResultsByUser(user_id) {
   const rows = db.prepare(
     `SELECT id, course_name, doc_id, doc_title, pattern, problem_count, set_name, meta, created_at
@@ -417,6 +497,7 @@ export function listQGResultsByUser(user_id) {
   ).all(user_id);
   return rows.map(r => ({ ...r, meta: r.meta ? safeJSON(r.meta) : null }));
 }
+
 
 // --- 末尾のエクスポート群に関数を追加 ---
 export function insertOCRResult({ user_id, course_name, video_name, ts_sec, identifier, ocr_text }) {
@@ -428,6 +509,7 @@ export function insertOCRResult({ user_id, course_name, video_name, ts_sec, iden
   return { id: info.lastInsertRowid };
 }
 
+
 export function insertASRResult({ user_id, course_name, video_name, start_sec, end_sec, identifier, ocr_context5, asr_text }) {
   const now = new Date().toISOString();
   const info = db.prepare(`
@@ -437,6 +519,7 @@ export function insertASRResult({ user_id, course_name, video_name, start_sec, e
   return { id: info.lastInsertRowid };
 }
 
+
 export function insertQGItem({ user_id, course_name, video_name, identifier, ocr5, asr_text, question, answer }) {
   const now = new Date().toISOString();
   const info = db.prepare(`
@@ -445,6 +528,7 @@ export function insertQGItem({ user_id, course_name, video_name, identifier, ocr
   `).run(user_id, course_name, video_name, identifier, ocr5 ?? null, asr_text ?? null, question, answer, now);
   return { id: info.lastInsertRowid };
 }
+
 
 export function listQGItemsByUser(user_id, { course_name = null, limit = 200 } = {}) {
   if (course_name) {
