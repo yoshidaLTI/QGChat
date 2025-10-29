@@ -26,6 +26,8 @@ whisper.cpp/
 
 # data
 *uploads
+/progress
+*progress
 
 # 一時・出力ファイル
 tmp/
